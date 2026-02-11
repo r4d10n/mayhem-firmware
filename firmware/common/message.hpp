@@ -787,7 +787,7 @@ struct CaptureConfig {
             return 0;
         } else {
             const size_t percent = baseband_bytes_dropped * 100U / baseband_bytes_received;
-            return std::max(1U, percent);
+            return std::max<size_t>(1, percent);
         }
     }
 };
@@ -1160,7 +1160,7 @@ class SSTVRXConfigureMessage : public Message {
    public:
     constexpr SSTVRXConfigureMessage(
         const uint8_t code)
-        : Message{id : ID::SSTVRXConfigure},
+        : Message{ID::SSTVRXConfigure},
           code(code) {
     }
 

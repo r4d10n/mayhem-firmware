@@ -144,7 +144,7 @@ void FreqManBaseView::refresh_categories() {
     });
 
     // Preserve last selection; ensure in range.
-    current_category_index = clip(current_category_index, 0u, new_categories.size());
+    current_category_index = clip<size_t>(current_category_index, 0, new_categories.size());
     auto saved_index = current_category_index;
     options_category.set_options(std::move(new_categories));
     options_category.set_selected_index(saved_index);

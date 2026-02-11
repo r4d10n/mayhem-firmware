@@ -3258,7 +3258,7 @@ VuMeter::VuMeter(
       LEDs_{LEDs},
       show_max_{show_max} {
     // set_focusable(false);
-    LED_height = std::max(1UL, parent_rect.size().height() / LEDs);
+    LED_height = std::max<uint32_t>(1, parent_rect.size().height() / LEDs);
     split = 256 / LEDs;
 }
 

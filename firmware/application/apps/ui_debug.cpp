@@ -229,7 +229,7 @@ void RegistersView::focus() {
 }
 
 bool RegistersView::on_encoder(const EncoderEvent delta) {
-    registers_widget.set_page(std::max(0ul, std::min(registers_widget.page_count() - 1, registers_widget.page() + delta)));
+    registers_widget.set_page(std::max<uint32_t>(0, std::min<uint32_t>(registers_widget.page_count() - 1, registers_widget.page() + delta)));
     registers_widget.update();
 
     return true;
@@ -495,7 +495,7 @@ DebugPmemView::DebugPmemView(NavigationView& nav)
 }
 
 bool DebugPmemView::on_encoder(const EncoderEvent delta) {
-    registers_widget.set_page(std::max(0ul, std::min((uint32_t)page_count - 1, registers_widget.page() + delta)));
+    registers_widget.set_page(std::max<uint32_t>(0, std::min<uint32_t>((uint32_t)page_count - 1, registers_widget.page() + delta)));
 
     update();
 

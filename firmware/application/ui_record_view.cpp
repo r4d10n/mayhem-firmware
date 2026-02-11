@@ -292,7 +292,7 @@ void RecordView::on_tick_second() {
 
 void RecordView::update_status_display() {
     if (is_active()) {
-        const auto dropped_percent = std::min(99U, capture_thread->state().dropped_percent());
+        const auto dropped_percent = std::min<size_t>(99, capture_thread->state().dropped_percent());
         const auto s = to_string_dec_uint(dropped_percent, 2, ' ') + "%";
         text_record_dropped.set(s);
     }

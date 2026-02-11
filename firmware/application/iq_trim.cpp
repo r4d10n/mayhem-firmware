@@ -63,7 +63,7 @@ Optional<CaptureInfo> profile_capture(
 
     auto profile_samples = buckets.size * samples_per_bucket;
     auto sample_interval = info.sample_count / profile_samples;
-    uint32_t bucket_width = std::max(1ULL, info.sample_count / buckets.size);
+    uint32_t bucket_width = std::max<uint64_t>(1, info.sample_count / buckets.size);
     uint64_t sample_index = 0;
     T value{};
 

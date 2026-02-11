@@ -257,8 +257,14 @@ std::string join(char c, std::initializer_list<std::string_view> strings) {
 }
 
 uint32_t simple_checksum(uint32_t buffer_address, uint32_t length) {
+#ifdef LINUX_SHIM
+    /* No SPI flash on Linux — skip memory access, return "no error" checksum */
+    (void)buffer_address; (void)length;
+    return 0;
+#else
     uint32_t checksum = 0;
     for (uint32_t i = 0; i < length; i += 4)
         checksum += *(uint32_t*)(buffer_address + i);
     return checksum;
+#endif
 }
