@@ -514,6 +514,10 @@ set(EXTERNAL_APP_SOURCES
     ${EXT_DIR}/morse_radio/ui_morse_radio.cpp
     ${EXT_DIR}/morseradiotx/main.cpp
     ${EXT_DIR}/morseradiotx/ui_morse_radiotx.cpp
+    ${EXT_DIR}/dtmf_tone/main.cpp
+    ${EXT_DIR}/dtmf_tone/ui_dtmf_tone.cpp
+    ${EXT_DIR}/audio_spectrum/main.cpp
+    ${EXT_DIR}/audio_spectrum/ui_audio_spectrum.cpp
 )
 
 # ---- Build the executable ----

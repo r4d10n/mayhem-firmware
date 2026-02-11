@@ -80,6 +80,8 @@ extern "C" {
     extern application_information_t _application_information_sdusb;
     extern application_information_t _application_information_morse_radio;
     extern application_information_t _application_information_morseradiotx;
+    extern application_information_t _application_information_dtmf_tone;
+    extern application_information_t _application_information_audio_spectrum;
 }
 
 namespace shim {
@@ -155,6 +157,8 @@ const std::vector<application_information_t*>& get_external_apps() {
         &_application_information_sdusb,
         &_application_information_morse_radio,
         &_application_information_morseradiotx,
+        &_application_information_dtmf_tone,
+        &_application_information_audio_spectrum,
     };
     return apps;
 }
