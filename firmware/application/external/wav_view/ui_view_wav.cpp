@@ -163,7 +163,7 @@ void ViewWavView::reset_controls() {
     field_pos_seconds.set_range(0, wav_reader->ms_duration() / 1000);
     field_pos_milliseconds.set_range(0, (wav_reader->ms_duration() < 1000) ? wav_reader->ms_duration() % 1000 : 999);
     field_pos_samples.set_range(0, wav_reader->sample_count() - 1);
-    field_scale.set_range(1, std::min(99999ul, wav_reader->sample_count() / screen_width));
+    field_scale.set_range(1, std::min<uint32_t>(99999u, wav_reader->sample_count() / screen_width));
 }
 
 bool ViewWavView::is_active() {

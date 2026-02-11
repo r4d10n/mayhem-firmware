@@ -86,6 +86,7 @@ extern "C" {
 typedef int IRQn_Type;
 #define M0_M4CORE_IRQn  1
 #define M4CORE_IRQn     1
+#define M0CORE_IRQn     1
 #define DMA_IRQn        2
 #define USB0_IRQn       3
 #define PIN_INT4_IRQn   4
@@ -93,6 +94,10 @@ typedef int IRQn_Type;
 #define DAC_IRQn        6
 #define TIMER0_IRQn     7
 #define LCD_IRQn        8
+
+#ifndef LPC43XX_M0APPTXEVENT_IRQ_PRIORITY
+#define LPC43XX_M0APPTXEVENT_IRQ_PRIORITY 0
+#endif
 
 #ifdef __cplusplus
 }
@@ -386,6 +391,11 @@ static inline int chSequentialStreamGet(BaseSequentialStream* ip) {
 
 #ifdef __cplusplus
 }
+#endif
+
+/* ---- ARM intrinsics shim (for baseband DSP code) ---- */
+#ifdef LINUX_SHIM
+#include "arm_intrinsics_shim.h"
 #endif
 
 #endif /* _HAL_H_ */

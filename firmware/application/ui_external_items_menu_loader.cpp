@@ -7,6 +7,10 @@
 #include "i2cdevmanager.hpp"
 #include "i2cdev_ppmod.hpp"
 
+#ifdef LINUX_SHIM
+#include "external_app_registry.hpp"
+#endif
+
 namespace ui {
 
 /* static */ std::vector<DynamicBitmap<16, 16>> ExternalItemsMenuLoader::bitmaps;
@@ -15,6 +19,19 @@ namespace ui {
 // please keep in sync with load_external_items
 /* static */ void ExternalItemsMenuLoader::load_all_external_items_callback(std::function<void(AppInfoConsole&)> callback, bool module_included) {
     if (!callback) return;
+
+#ifdef LINUX_SHIM
+    (void)module_included;
+    for (auto* app_info : shim::get_external_apps()) {
+        AppInfoConsole appInfoConsole = {
+            reinterpret_cast<const char*>(&app_info->app_name[0]),
+            reinterpret_cast<const char*>(&app_info->app_name[0]),
+            app_info->menu_location
+        };
+        callback(appInfoConsole);
+    }
+    return;
+#endif /* LINUX_SHIM */
 
     auto dev = (i2cdev::I2cDev_PPmod*)i2cdev::I2CDevManager::get_dev_by_model(I2C_DEVMDL::I2CDECMDL_PPMOD);
 
@@ -101,6 +118,33 @@ namespace ui {
     bitmaps.clear();
 
     std::vector<GridItemEx> external_apps;
+
+#ifdef LINUX_SHIM
+    /* On Linux, all external apps are compiled into the binary.
+     * Just iterate the registry — no SD card scanning needed. */
+    for (auto* app_info : shim::get_external_apps()) {
+        if (app_info->menu_location != app_location)
+            continue;
+
+        GridItemEx gridItem = {};
+        gridItem.text = reinterpret_cast<const char*>(&app_info->app_name[0]);
+        gridItem.color = Color((uint16_t)app_info->icon_color);
+
+        auto dyn_bmp = DynamicBitmap<16, 16>{app_info->bitmap_data};
+        gridItem.bitmap = dyn_bmp.bitmap();
+        bitmaps.push_back(std::move(dyn_bmp));
+
+        /* Direct function call — no file loading or relocation needed */
+        gridItem.on_select = [&nav, app_info]() {
+            app_info->externalAppEntry(nav);
+        };
+
+        gridItem.desired_position = app_info->desired_menu_position;
+        external_apps.push_back(gridItem);
+    }
+
+    return external_apps;
+#endif /* LINUX_SHIM */
 
     auto dev = (i2cdev::I2cDev_PPmod*)i2cdev::I2CDevManager::get_dev_by_model(I2C_DEVMDL::I2CDECMDL_PPMOD);
 

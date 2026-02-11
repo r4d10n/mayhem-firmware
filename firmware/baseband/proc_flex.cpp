@@ -21,6 +21,8 @@
 #define SLICE_THRESHOLD 0.667
 
 // Implement EccContainer here to avoid linking pocsag.cpp which pulls in app headers
+// On Linux, pocsag.cpp is linked in the same binary, so skip the duplicate.
+#ifndef LINUX_SHIM
 using namespace pocsag;
 
 EccContainer::EccContainer() {
@@ -131,6 +133,7 @@ int EccContainer::error_correct(uint32_t& val) {
 
     return errl;
 }
+#endif /* !LINUX_SHIM — EccContainer already provided by pocsag.cpp */
 
 namespace {
 

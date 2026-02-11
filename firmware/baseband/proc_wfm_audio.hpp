@@ -40,6 +40,8 @@
 #include <tuple>
 #include <variant>
 
+#ifndef MULTI_DECIMATOR_DEFINED
+#define MULTI_DECIMATOR_DEFINED
 template <typename... Args>
 class MultiDecimator {
    public:
@@ -74,6 +76,7 @@ class MultiDecimator {
    private:
     std::variant<Args...> decimator_{};
 };
+#endif /* MULTI_DECIMATOR_DEFINED */
 
 class WidebandFMAudio : public BasebandProcessor {
    public:

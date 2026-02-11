@@ -37,6 +37,9 @@
 /* SDL2 display backend */
 #include "sdl2_backend.hpp"
 
+/* SDL2 audio output */
+#include "audio_sink.hpp"
+
 /* Shim-specific declarations */
 extern "C" void fatfs_shim_set_root(const char* root);
 
@@ -109,6 +112,7 @@ int main(int argc, char* argv[]) {
     std::string sdcard_root;
     int web_port = 8080;
     bool verbose = false;
+    bool no_audio = false;
 
     /* Default SD card root: ~/.portapack */
     const char* home = getenv("HOME");
@@ -124,6 +128,8 @@ int main(int argc, char* argv[]) {
             sdcard_root = argv[++i];
         } else if (strcmp(argv[i], "--web-port") == 0 && i + 1 < argc) {
             web_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--no-audio") == 0) {
+            no_audio = true;
         } else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -186,6 +192,15 @@ int main(int argc, char* argv[]) {
     shim::SDL2Backend::get().init(240, 320, 2);
     shim::SDL2Backend::get().start();
 
+    /* Initialize SDL2 audio output */
+    if (!no_audio) {
+        if (shim::AudioSink::get().init(48000, 1024)) {
+            fprintf(stderr, "[AudioSink] Audio output enabled\n");
+        } else {
+            fprintf(stderr, "[AudioSink] Audio output failed — continuing without audio\n");
+        }
+    }
+
     fprintf(stderr, "[SHIM] Starting event loop...\n");
 
     /* Create UI context and system view */
@@ -207,6 +222,9 @@ int main(int argc, char* argv[]) {
 
     /* Start the event loop (blocks until shutdown) */
     event_dispatcher.run();
+
+    /* Shutdown audio */
+    shim::AudioSink::get().shutdown();
 
     /* Shutdown SDL2 backend */
     shim::SDL2Backend::get().stop();

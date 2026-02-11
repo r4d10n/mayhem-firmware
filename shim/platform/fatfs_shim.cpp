@@ -440,3 +440,24 @@ int f_puts(const TCHAR* str, FIL* fp) {
     f_write(fp, s.c_str(), len, &bw);
     return (int)bw;
 }
+
+/* ---- Low-level disk I/O stubs ---- */
+/* These are only used by sd_wipe (destructive disk write).
+ * On Linux, raw disk I/O is a no-op — we don't expose raw sectors. */
+
+#include "diskio.h"
+
+DRESULT disk_read(BYTE pdrv, BYTE* buff, DWORD sector, UINT count) {
+    (void)pdrv; (void)buff; (void)sector; (void)count;
+    return RES_OK;
+}
+
+DRESULT disk_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count) {
+    (void)pdrv; (void)buff; (void)sector; (void)count;
+    return RES_OK;
+}
+
+DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
+    (void)pdrv; (void)cmd; (void)buff;
+    return RES_OK;
+}

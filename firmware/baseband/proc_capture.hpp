@@ -38,6 +38,8 @@
 #include <variant>
 
 /* A decimator that just returns the source buffer. */
+#ifndef NOOP_DECIM_DEFINED
+#define NOOP_DECIM_DEFINED
 class NoopDecim {
    public:
     static constexpr int decimation_factor = 1;
@@ -48,8 +50,11 @@ class NoopDecim {
         return {src.p, src.count, src.sampling_rate};
     }
 };
+#endif /* NOOP_DECIM_DEFINED */
 
 /* Decimator wrapper that can hold one of a set of decimators and dispatch at runtime. */
+#ifndef MULTI_DECIMATOR_DEFINED
+#define MULTI_DECIMATOR_DEFINED
 template <typename... Args>
 class MultiDecimator {
    public:
@@ -84,6 +89,7 @@ class MultiDecimator {
    private:
     std::variant<Args...> decimator_{};
 };
+#endif /* MULTI_DECIMATOR_DEFINED */
 
 class CaptureProcessor : public BasebandProcessor {
    public:

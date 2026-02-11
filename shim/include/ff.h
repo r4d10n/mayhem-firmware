@@ -116,11 +116,13 @@ typedef struct {
 /* Filesystem object (minimal) */
 typedef struct {
     BYTE    fs_type;
+    BYTE    drv;         /* Physical drive number */
     DWORD   n_fatent;
     DWORD   csize;       /* Cluster size in sectors */
     DWORD   free_clst;
     DWORD   last_clst;
     DWORD   fsize;
+    DWORD   fatbase;     /* FAT base sector */
 } FATFS;
 
 /* ---- FatFs function prototypes ---- */

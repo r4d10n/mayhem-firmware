@@ -71,9 +71,11 @@ typedef struct Thread {
     tprio_t             prio;
     msg_t               rdymsg;
     const char*         name;
+    uint32_t            total_ticks;   /* Accumulated CPU ticks (for stats) */
     /* For chThdWait / thread references */
     struct Thread*      newer;
     void*               p_ctx;
+    int                 p_refs;     /* Reference counter (used by some apps) */
 } Thread;
 
 /* Working area - just allocate stack on heap for Linux */
@@ -245,6 +247,7 @@ typedef struct {
 /* Registry - simplified */
 #define chRegFirstThread() chThdSelf()
 #define chRegNextThread(tp) ((Thread*)NULL)
+#define chRegSetThreadName(name) do { (void)(name); } while(0)
 
 /* Scheduler - ISR context */
 #define chSchReadyI(tp) ((void)(tp))

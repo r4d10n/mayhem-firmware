@@ -32,16 +32,21 @@
  * But yes, this is a hack, and something better is needed. It's too tangled of
  * a knot to tackle at the moment, though...
  */
-#if defined(LPC43XX_M4)
+#if defined(LINUX_SHIM)
+#include "lpc43xx_cpp.hpp"
+
+struct Timestamp : public lpc43xx::rtc::RTC {
+    using lpc43xx::rtc::RTC::RTC;
+    static Timestamp now();
+};
+#elif defined(LPC43XX_M4)
 struct Timestamp {
     uint32_t tv_date{0};
     uint32_t tv_time{0};
 
     static Timestamp now();
 };
-#endif
-
-#if defined(LPC43XX_M0)
+#elif defined(LPC43XX_M0)
 #include "lpc43xx_cpp.hpp"
 
 using Timestamp = lpc43xx::rtc::RTC;

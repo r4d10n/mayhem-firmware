@@ -14,6 +14,10 @@
 #include <cstdint>
 #include <ctime>
 
+/* SDR + baseband integration */
+#include "soapy_sdr_shim.hpp"
+#include "baseband_thread_shim.hpp"
+
 /* Phase 2: framebuffer + SDL2 input state */
 #include "framebuffer.hpp"
 #include "sdl2_backend.hpp"
@@ -448,14 +452,41 @@ ui::Coord ILI9341::scroll_area_y(const ui::Coord y) const {
 
 namespace radio {
 
-void set_direction(const rf::Direction new_direction) { (void)new_direction; }
-bool set_tuning_frequency(const rf::Frequency frequency) { (void)frequency; return true; }
-void set_rf_amp(const bool enabled) { (void)enabled; }
-void set_lna_gain(const int_fast8_t db) { (void)db; }
-void set_vga_gain(const int_fast8_t db) { (void)db; }
+void set_direction(const rf::Direction new_direction) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) {
+        sdr.set_direction(new_direction == rf::Direction::Transmit
+                          ? 1 /* SOAPY_SDR_TX */ : 0 /* SOAPY_SDR_RX */);
+    }
+}
+bool set_tuning_frequency(const rf::Frequency frequency) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) {
+        sdr.set_frequency(static_cast<double>(frequency));
+    }
+    return true;
+}
+void set_rf_amp(const bool enabled) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) sdr.set_rf_amp(enabled);
+}
+void set_lna_gain(const int_fast8_t db) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) sdr.set_lna_gain(db);
+}
+void set_vga_gain(const int_fast8_t db) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) sdr.set_vga_gain(db);
+}
 void set_tx_gain(const int_fast8_t db) { (void)db; }
-void set_baseband_filter_bandwidth(const uint32_t bandwidth_minimum) { (void)bandwidth_minimum; }
-void set_baseband_rate(const uint32_t rate) { (void)rate; }
+void set_baseband_filter_bandwidth(const uint32_t bandwidth_minimum) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) sdr.set_bandwidth(static_cast<double>(bandwidth_minimum));
+}
+void set_baseband_rate(const uint32_t rate) {
+    auto& sdr = shim::SoapySDRShim::get();
+    if (sdr.is_open()) sdr.set_sample_rate(static_cast<double>(rate));
+}
 void set_antenna_bias(const bool on) { (void)on; }
 void set_fm_deviation(const uint32_t deviation) { (void)deviation; }
 void disable() {}
@@ -540,10 +571,16 @@ namespace ui {
 
 void m4_init(const uint32_t image_tag, const uint32_t memory_addr, const bool run) {
     (void)image_tag; (void)memory_addr; (void)run;
+    /* This overload is for raw uint32 tags — not normally used by baseband_api.
+     * The spi_flash::image_tag_t overload below handles the real dispatch. */
 }
 
-void m4_request_shutdown() {}
-bool m4_is_running() { return false; }
+void m4_request_shutdown() {
+    shim::BasebandThreadShim::get().stop();
+}
+bool m4_is_running() {
+    return shim::BasebandThreadShim::get().is_running();
+}
 
 /* ============================================================
  * Misc stubs
@@ -991,7 +1028,9 @@ void SDCardDebugView::on_test() {}
 void m4_init(const portapack::spi_flash::image_tag_t image_tag,
              const portapack::memory::region_t memory_region,
              const bool run) {
-    (void)image_tag; (void)memory_region; (void)run;
+    (void)memory_region; (void)run;
+    /* Launch the baseband processor for this image tag */
+    shim::BasebandThreadShim::get().start(image_tag);
 }
 
 void m4_init_prepared(const uint32_t m4_code, const bool full_reset) {

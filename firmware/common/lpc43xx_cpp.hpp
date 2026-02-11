@@ -45,6 +45,11 @@ static inline void clear_flag_saturation() {
 }
 
 } /* namespace m4 */
+#elif defined(LINUX_SHIM)
+namespace m4 {
+static inline bool flag_saturation() { return false; }
+static inline void clear_flag_saturation() { }
+} /* namespace m4 */
 #endif
 
 namespace creg {
@@ -70,7 +75,7 @@ inline void disable() {
 }
 #endif
 
-#if defined(LPC43XX_M4)
+#if defined(LPC43XX_M4) || defined(LINUX_SHIM)
 inline void assert_event() {
     __SEV();
 }
@@ -84,7 +89,7 @@ inline void clear() {
 
 namespace m0apptxevent {
 
-#if defined(LPC43XX_M4)
+#if defined(LPC43XX_M4) || defined(LINUX_SHIM)
 inline void enable() {
     nvicEnableVector(M0CORE_IRQn, CORTEX_PRIORITY_MASK(LPC43XX_M0APPTXEVENT_IRQ_PRIORITY));
 }

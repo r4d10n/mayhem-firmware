@@ -100,7 +100,7 @@ void write_firmware(FIL* firmware_file) {
         if (page_index % 32 == 0)
             palTogglePad(LED_PORT, LEDTX_PAD);
 
-        size_t bytes_read;
+        UINT bytes_read;
         if (f_read(firmware_file, data_buffer, PAGE_LEN, &bytes_read) != FR_OK) chDbgPanic("no data");
 
         if (bytes_read > 0)

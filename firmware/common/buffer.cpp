@@ -21,7 +21,17 @@
 
 #include "buffer.hpp"
 
-#if defined(LPC43XX_M4)
+#if defined(LINUX_SHIM)
+
+Timestamp Timestamp::now() {
+    Timestamp timestamp;
+    /* Use the shim RTC sync which reads system clock */
+    extern void shim_rtc_sync(uint32_t* tv_date, uint32_t* tv_time);
+    shim_rtc_sync(&timestamp.tv_date, &timestamp.tv_time);
+    return timestamp;
+}
+
+#elif defined(LPC43XX_M4)
 #include "lpc43xx_m4.h"
 
 Timestamp Timestamp::now() {

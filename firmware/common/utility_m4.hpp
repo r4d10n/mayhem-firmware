@@ -22,7 +22,7 @@
 #ifndef __UTILITY_M4_H__
 #define __UTILITY_M4_H__
 
-#if defined(LPC43XX_M4)
+#if defined(LPC43XX_M4) || defined(LINUX_SHIM)
 
 #include <hal.h>
 
@@ -42,6 +42,6 @@ static inline complex32_t multiply_conjugate_s16_s32(const complex16_t::rep_type
     const int32_t i = __QSUB(ir, ri);
     return {r, i};
 }
-#endif /* defined(LPC43XX_M4) */
+#endif /* defined(LPC43XX_M4) || defined(LINUX_SHIM) */
 
 #endif /*__UTILITY_M4_H__*/

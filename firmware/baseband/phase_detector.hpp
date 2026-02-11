@@ -46,13 +46,17 @@ class PhaseDetectorEarlyLateGate {
     }
 
     result_t operator()(const history_t symbol_history) const {
+#ifdef LINUX_SHIM
+        // On x86_64, unsigned long is 8 bytes but history_t is uint32_t (4 bytes).
+        // Use __builtin_popcount (unsigned int, 4 bytes) instead of popcountl.
+        static_assert(sizeof(history_t) == sizeof(unsigned int), "popcount size mismatch");
+        const size_t late_side = __builtin_popcount(symbol_history & late_mask);
+        const size_t early_side = __builtin_popcount(symbol_history & early_mask);
+#else
         static_assert(sizeof(history_t) == sizeof(unsigned long), "popcountl size mismatch");
-
-        // history = ...0111, early
-        // history = ...1110, late
-
         const size_t late_side = __builtin_popcountl(symbol_history & late_mask);
         const size_t early_side = __builtin_popcountl(symbol_history & early_mask);
+#endif
         const size_t total_count = late_side + early_side;
         const auto lateness = static_cast<int>(late_side) - static_cast<int>(early_side);
         const symbol_t symbol = (total_count >= sample_threshold);
