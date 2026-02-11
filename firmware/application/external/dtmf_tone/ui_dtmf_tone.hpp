@@ -4,6 +4,7 @@
 #include "ui.hpp"
 #include "ui_navigation.hpp"
 #include "ui_receiver.hpp"
+#include "message.hpp"
 
 using namespace ui;
 
@@ -19,8 +20,9 @@ class DTMFToneView : public View {
    private:
     NavigationView& nav_;
 
-    static constexpr uint32_t sample_rate = 24000;
+    static constexpr uint32_t sample_rate = 48000;
     static constexpr uint32_t tone_duration_ms = 200;
+    static constexpr size_t samples_per_chunk = 1024;
 
     // DTMF frequency tables
     static constexpr uint32_t row_freq[4] = {697, 770, 852, 941};
@@ -34,6 +36,10 @@ class DTMFToneView : public View {
     std::string sequence{};
 
     void on_key_press(uint8_t row, uint8_t col);
+
+#ifdef LINUX_SHIM
+    void generate_dual_tone(uint32_t freq1, uint32_t freq2, uint32_t duration_ms);
+#endif
 
     Labels labels{
         {{2 * 8, 1 * 16}, "DTMF Tone Generator", Theme::getInstance()->fg_light->foreground},

@@ -1,16 +1,25 @@
 #include "ui_dtmf_tone.hpp"
+#include "string_format.hpp"
+
+#ifdef LINUX_SHIM
+#include "audio_sink.hpp"
+#include <cmath>
+#endif
+
+#ifndef LINUX_SHIM
 #include "baseband_api.hpp"
 #include "audio.hpp"
 #include "portapack.hpp"
-#include "string_format.hpp"
-
 using namespace portapack;
+#endif
 
 namespace ui::external_app::dtmf_tone {
 
 DTMFToneView::DTMFToneView(NavigationView& nav)
     : nav_{nav} {
+#ifndef LINUX_SHIM
     baseband::run_prepared_image(portapack::memory::map::m4_code.base());
+#endif
 
     add_children({&labels,
                   &text_sequence,
@@ -47,22 +56,33 @@ DTMFToneView::DTMFToneView(NavigationView& nav)
         sequence.clear();
         text_sequence.set("");
         text_tone_info.set("");
+#ifndef LINUX_SHIM
         baseband::request_beep_stop();
+#endif
     };
 
     field_volume.set_value(0);
     field_volume.set_value(80);
 
+#ifdef LINUX_SHIM
+    // Initialize AudioSink for Linux shim
+    shim::AudioSink::get().init(sample_rate, samples_per_chunk);
+#else
     audio::set_rate(audio::Rate::Hz_24000);
     audio::output::start();
+#endif
 
     text_tone_info.set("Press a key to play tone");
 }
 
 DTMFToneView::~DTMFToneView() {
+#ifdef LINUX_SHIM
+    shim::AudioSink::get().shutdown();
+#else
     baseband::request_beep_stop();
     baseband::shutdown();
     audio::output::stop();
+#endif
 }
 
 void DTMFToneView::focus() {
@@ -80,8 +100,59 @@ void DTMFToneView::on_key_press(uint8_t row, uint8_t col) {
     uint32_t cf = col_freq[col];
     text_tone_info.set(to_string_dec_uint(rf) + "+" + to_string_dec_uint(cf) + "Hz [" + std::string(1, key) + "]");
 
-    // Play the row frequency tone (single-tone; true DTMF requires dual-tone mixing)
+#ifdef LINUX_SHIM
+    // Generate dual-tone DTMF signal (proper DTMF)
+    generate_dual_tone(rf, cf, tone_duration_ms);
+#else
+    // Use single-tone baseband beep for ARM (legacy behavior)
     baseband::request_audio_beep(rf, sample_rate, tone_duration_ms);
+#endif
 }
+
+#ifdef LINUX_SHIM
+void DTMFToneView::generate_dual_tone(uint32_t freq1, uint32_t freq2, uint32_t duration_ms) {
+    // Calculate total samples needed
+    size_t total_samples = (duration_ms * sample_rate) / 1000;
+
+    constexpr float amplitude = 6000.0f;  // Per tone (mixed peak ~12000)
+    constexpr float two_pi = 2.0f * M_PI;
+    const float phase1_inc = two_pi * static_cast<float>(freq1) / static_cast<float>(sample_rate);
+    const float phase2_inc = two_pi * static_cast<float>(freq2) / static_cast<float>(sample_rate);
+
+    float phase1 = 0.0f;
+    float phase2 = 0.0f;
+
+    // Generate and write samples in chunks
+    constexpr size_t chunk_size = 1024;
+    shim::AudioSample buffer[chunk_size];
+
+    size_t samples_remaining = total_samples;
+    while (samples_remaining > 0) {
+        size_t current_chunk = (samples_remaining < chunk_size) ? samples_remaining : chunk_size;
+
+        for (size_t i = 0; i < current_chunk; i++) {
+            // Generate dual-tone DTMF: mix two sine waves
+            float sample1 = amplitude * sinf(phase1);
+            float sample2 = amplitude * sinf(phase2);
+            int16_t mixed = static_cast<int16_t>(sample1 + sample2);
+
+            buffer[i].left = mixed;
+            buffer[i].right = mixed;
+
+            // Advance phases
+            phase1 += phase1_inc;
+            phase2 += phase2_inc;
+
+            // Wrap phases to prevent accumulation errors
+            if (phase1 >= two_pi) phase1 -= two_pi;
+            if (phase2 >= two_pi) phase2 -= two_pi;
+        }
+
+        // Write to AudioSink
+        shim::AudioSink::get().write(buffer, current_chunk);
+        samples_remaining -= current_chunk;
+    }
+}
+#endif
 
 }  // namespace ui::external_app::dtmf_tone

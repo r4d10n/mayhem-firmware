@@ -84,6 +84,7 @@ set(SHIM_SOURCES
     ${SHIM}/display/framebuffer.cpp
     ${SHIM}/display/sdl2_backend.cpp
     ${SHIM}/sdr/audio_sink.cpp
+    ${SHIM}/sdr/audio_source.cpp
     ${SHIM}/sdr/audio_dma_shim.cpp
     ${SHIM}/sdr/soapy_sdr_shim.cpp
     ${SHIM}/sdr/baseband_stubs.cpp

@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <complex>
 
 using namespace ui;
 
@@ -43,6 +44,12 @@ class AudioSpectrumView : public View {
     void update_display();
     void draw_waterfall_line();
 
+#ifdef LINUX_SHIM
+    void process_live_audio();
+    static void apply_hanning_window(std::complex<float>* data, size_t n);
+    static void fft_radix2(std::complex<float>* x, int N);
+#endif
+
     static Color heat_color(uint8_t v) {
         int val = v;
         if (val < 64)
@@ -76,6 +83,12 @@ class AudioSpectrumView : public View {
             if (test_mode_) {
                 generate_test_spectrum();
             }
+#ifdef LINUX_SHIM
+            else {
+                // Process live audio in Linux mode
+                process_live_audio();
+            }
+#endif
             update_display();
         }};
 
