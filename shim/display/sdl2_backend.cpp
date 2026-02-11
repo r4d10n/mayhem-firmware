@@ -20,6 +20,7 @@
 
 #include "sdl2_backend.hpp"
 #include "framebuffer.hpp"
+#include "web_ui_server.hpp"
 
 /* Firmware event system — provides EventDispatcher::events_flag()
  * and the EVT_MASK_* constants. */
@@ -131,6 +132,12 @@ void SDL2Backend::render_loop() {
         SDL_UpdateTexture(texture, nullptr,
                           Framebuffer::get().data(),
                           width_ * sizeof(uint16_t));
+
+        /* 3b. Push frame to WebUI clients (if any are connected) */
+        if (WebUIServer::get().is_running()) {
+            WebUIServer::get().push_frame(
+                Framebuffer::get().data(), width_, height_);
+        }
 
         /* 4. Present — framebuffer is already in correct orientation */
         SDL_RenderClear(renderer);

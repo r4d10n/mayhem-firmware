@@ -15,7 +15,7 @@
 #include <ctime>
 
 /* SDR + baseband + audio integration */
-#include "soapy_sdr_shim.hpp"
+#include "active_sdr.hpp"
 #include "baseband_thread_shim.hpp"
 #include "audio_sink.hpp"
 
@@ -454,44 +454,53 @@ ui::Coord ILI9341::scroll_area_y(const ui::Coord y) const {
 namespace radio {
 
 void set_direction(const rf::Direction new_direction) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) {
-        sdr.set_direction(new_direction == rf::Direction::Transmit
-                          ? 1 /* SOAPY_SDR_TX */ : 0 /* SOAPY_SDR_RX */);
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) {
+        sdr->set_direction(new_direction == rf::Direction::Transmit
+                           ? 1 /* TX */ : 0 /* RX */);
     }
 }
 bool set_tuning_frequency(const rf::Frequency frequency) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) {
-        sdr.set_frequency(static_cast<double>(frequency));
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) {
+        sdr->set_frequency(static_cast<double>(frequency));
     }
     return true;
 }
 void set_rf_amp(const bool enabled) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) sdr.set_rf_amp(enabled);
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_rf_amp(enabled);
 }
 void set_lna_gain(const int_fast8_t db) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) sdr.set_lna_gain(db);
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_lna_gain(db);
 }
 void set_vga_gain(const int_fast8_t db) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) sdr.set_vga_gain(db);
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_vga_gain(db);
 }
-void set_tx_gain(const int_fast8_t db) { (void)db; }
+void set_tx_gain(const int_fast8_t db) {
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_tx_gain(db);
+}
 void set_baseband_filter_bandwidth(const uint32_t bandwidth_minimum) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) sdr.set_bandwidth(static_cast<double>(bandwidth_minimum));
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_bandwidth(static_cast<double>(bandwidth_minimum));
 }
 void set_baseband_rate(const uint32_t rate) {
-    auto& sdr = shim::SoapySDRShim::get();
-    if (sdr.is_open()) sdr.set_sample_rate(static_cast<double>(rate));
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->set_sample_rate(static_cast<double>(rate));
 }
 void set_antenna_bias(const bool on) { (void)on; }
 void set_fm_deviation(const uint32_t deviation) { (void)deviation; }
-void disable() {}
-void enable(const void*) {}
+void disable() {
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_streaming()) sdr->stop_stream();
+}
+void enable(const void*) {
+    auto* sdr = shim::active_sdr();
+    if (sdr && sdr->is_open()) sdr->start_stream();
+}
 
 } /* namespace radio */
 

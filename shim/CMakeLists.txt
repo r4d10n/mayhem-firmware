@@ -23,6 +23,7 @@ include_directories(
     ${SHIM}/display
     ${SHIM}/platform
     ${SHIM}/sdr
+    ${SHIM}/web
     ${BB_DIR}
     ${APP_DIR}
     ${APP_DIR}/ui
@@ -72,6 +73,20 @@ else()
     set(SOAPY_LIBS "")
 endif()
 
+# ---- libiio (optional — PlutoSDR direct support) ----
+find_library(LIBIIO_LIBRARY iio)
+find_path(LIBIIO_INCLUDE_DIR iio.h)
+if(LIBIIO_LIBRARY AND LIBIIO_INCLUDE_DIR)
+    message(STATUS "libiio found: ${LIBIIO_LIBRARY}")
+    add_definitions(-DLIBIIO_AVAILABLE=1)
+    include_directories(${LIBIIO_INCLUDE_DIR})
+    set(LIBIIO_LIBS ${LIBIIO_LIBRARY})
+else()
+    message(STATUS "libiio not found - building without PlutoSDR direct support")
+    add_definitions(-DLIBIIO_AVAILABLE=0)
+    set(LIBIIO_LIBS "")
+endif()
+
 # ---- Shim sources ----
 set(SHIM_SOURCES
     ${SHIM}/main_linux.cpp
@@ -86,16 +101,22 @@ set(SHIM_SOURCES
     ${SHIM}/sdr/audio_sink.cpp
     ${SHIM}/sdr/audio_source.cpp
     ${SHIM}/sdr/audio_dma_shim.cpp
+    ${SHIM}/sdr/sdr_interface.cpp
+    ${SHIM}/sdr/active_sdr.cpp
     ${SHIM}/sdr/soapy_sdr_shim.cpp
+    ${SHIM}/sdr/libiio_sdr.cpp
     ${SHIM}/sdr/baseband_stubs.cpp
     ${SHIM}/sdr/processor_factory.cpp
     ${SHIM}/sdr/baseband_thread_shim.cpp
     ${SHIM}/sdr/external_app_registry.cpp
+    ${SHIM}/web/web_ui_server.cpp
 )
 
-# SoapySDR code uses try/catch — enable exceptions for SDR files
+# SoapySDR and libiio code uses try/catch — enable exceptions for SDR files
 set_source_files_properties(
     ${SHIM}/sdr/soapy_sdr_shim.cpp
+    ${SHIM}/sdr/libiio_sdr.cpp
+    ${SHIM}/sdr/sdr_interface.cpp
     PROPERTIES COMPILE_FLAGS "-fexceptions"
 )
 
@@ -535,10 +556,10 @@ add_executable(portapack-linux
 )
 
 if (TARGET SDL2::SDL2)
-    target_link_libraries(portapack-linux SDL2::SDL2 pthread ${SOAPY_LIBS})
+    target_link_libraries(portapack-linux SDL2::SDL2 pthread ${SOAPY_LIBS} ${LIBIIO_LIBS})
 else()
     target_include_directories(portapack-linux PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(portapack-linux ${SDL2_LIBRARIES} pthread ${SOAPY_LIBS})
+    target_link_libraries(portapack-linux ${SDL2_LIBRARIES} pthread ${SOAPY_LIBS} ${LIBIIO_LIBS})
 endif()
 
 # Print a summary

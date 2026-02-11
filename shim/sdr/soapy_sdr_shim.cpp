@@ -11,6 +11,29 @@ SoapySDRShim& SoapySDRShim::get() {
     return instance;
 }
 
+bool SoapySDRShim::open(const std::string& device_args) {
+    // Parse "driver=hackrf,serial=1234" format into driver/serial pair
+    std::string driver, serial;
+    // Simple comma-separated key=value parser
+    size_t pos = 0;
+    std::string args = device_args;
+    while (pos < args.size()) {
+        size_t comma = args.find(',', pos);
+        std::string token = (comma == std::string::npos)
+            ? args.substr(pos) : args.substr(pos, comma - pos);
+        size_t eq = token.find('=');
+        if (eq != std::string::npos) {
+            std::string key = token.substr(0, eq);
+            std::string val = token.substr(eq + 1);
+            if (key == "driver") driver = val;
+            else if (key == "serial") serial = val;
+        }
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return open(driver, serial);
+}
+
 bool SoapySDRShim::open(const std::string& driver, const std::string& serial) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -405,6 +428,11 @@ namespace shim {
 SoapySDRShim& SoapySDRShim::get() {
     static SoapySDRShim instance;
     return instance;
+}
+
+bool SoapySDRShim::open(const std::string& device_args) {
+    fprintf(stderr, "[SDR] SoapySDR not available (compiled without SOAPY_SDR_AVAILABLE)\n");
+    return false;
 }
 
 bool SoapySDRShim::open(const std::string& driver, const std::string& serial) {

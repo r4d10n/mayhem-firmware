@@ -1,90 +1,75 @@
 #pragma once
 
 #include "sdr_interface.hpp"
-
-#include <string>
-#include <vector>
-#include <cstdint>
-#include <cstddef>
 #include <atomic>
 #include <mutex>
+#include <vector>
 
-// Forward declare SoapySDR types to avoid requiring the header when SOAPY_SDR_AVAILABLE=0
-#if SOAPY_SDR_AVAILABLE
-#include <SoapySDR/Device.hpp>
-#include <SoapySDR/Formats.hpp>
-#include <SoapySDR/Types.hpp>
-#include <SoapySDR/Version.hpp>
+#if LIBIIO_AVAILABLE
+struct iio_context;
+struct iio_device;
+struct iio_channel;
+struct iio_buffer;
 #endif
 
 namespace shim {
 
-class SoapySDRShim : public SDRInterface {
+class LibIIOSDR : public SDRInterface {
 public:
-    SoapySDRShim() = default;
-    ~SoapySDRShim() override = default;
+    LibIIOSDR() = default;
+    ~LibIIOSDR() override;
 
-    static SoapySDRShim& get();  // Singleton
-
-    // SDRInterface::open — parses "driver=X,serial=Y" format
+    // SDRInterface implementation
     bool open(const std::string& device_args = "") override;
     void close() override;
     bool is_open() const override;
 
-    // Legacy two-arg open for direct driver/serial specification
-    bool open(const std::string& driver, const std::string& serial);
-
-    // Frequency
     void set_frequency(double freq_hz) override;
     double get_frequency() const override;
 
-    // Gain control (maps to SoapySDR gain elements)
     void set_lna_gain(int db) override;
     void set_vga_gain(int db) override;
     void set_rf_amp(bool enabled) override;
     void set_tx_gain(int db) override;
 
-    // Sample rate & bandwidth
     void set_sample_rate(double rate_hz) override;
     double get_sample_rate() const override;
     void set_bandwidth(double bw_hz) override;
 
-    // Direction (RX or TX)
     void set_direction(int direction) override;
     int get_direction() const override;
 
-    // Streaming
     bool start_stream() override;
     void stop_stream() override;
     bool is_streaming() const override;
 
-    // IQ sample I/O
     int read_samples(iq_sample_t* buffer, size_t count, long timeout_us = 100000) override;
     int write_samples(const iq_sample_t* buffer, size_t count, long timeout_us = 100000) override;
 
-    // Device info
     std::string get_driver_name() const override;
     std::string get_hardware_name() const override;
-    static std::vector<std::string> list_devices();
 
 private:
-#if SOAPY_SDR_AVAILABLE
-    SoapySDR::Device* device_ = nullptr;
-    SoapySDR::Stream* stream_ = nullptr;
+#if LIBIIO_AVAILABLE
+    iio_context* ctx_ = nullptr;
+    iio_device* phy_ = nullptr;      // ad9361-phy
+    iio_device* rx_dev_ = nullptr;    // cf-ad9361-lpc (RX)
+    iio_device* tx_dev_ = nullptr;    // cf-ad9361-dds-core-lpc (TX)
+    iio_channel* rx_i_ = nullptr;
+    iio_channel* rx_q_ = nullptr;
+    iio_channel* tx_i_ = nullptr;
+    iio_channel* tx_q_ = nullptr;
+    iio_buffer* rx_buf_ = nullptr;
+    iio_buffer* tx_buf_ = nullptr;
 #endif
 
-    int direction_ = 0;  // SOAPY_SDR_RX
+    int direction_ = 0;  // 0=RX, 1=TX
     double frequency_ = 0;
     double sample_rate_ = 0;
     double bandwidth_ = 0;
+    bool open_ = false;
     bool streaming_ = false;
-    std::string driver_name_;
-    std::string hardware_name_;
     mutable std::mutex mutex_;
-
-    // Format negotiation
-    bool use_cs8_ = true;  // prefer CS8, fall back to CS16
-    std::vector<int16_t> convert_buf_;  // temp buffer for CS16->CS8 conversion
 };
 
 } // namespace shim

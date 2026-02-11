@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <memory>
 #include <csignal>
 #include <sys/stat.h>
 #include <sys/mman.h>
@@ -39,6 +40,13 @@
 
 /* SDL2 audio output */
 #include "audio_sink.hpp"
+
+/* SDR backend */
+#include "sdr_interface.hpp"
+#include "active_sdr.hpp"
+
+/* WebSocket Web UI */
+#include "web_ui_server.hpp"
 
 /* Shim-specific declarations */
 extern "C" void fatfs_shim_set_root(const char* root);
@@ -100,6 +108,9 @@ static void print_usage(const char* prog) {
         "  --web-port PORT      Web UI port (default: 8080)\n"
         "  --no-sdr             Run without SDR hardware\n"
         "  --no-audio           Run without audio output\n"
+        "  --sdr-driver DRIVER  SoapySDR driver name (e.g. hackrf, rtlsdr)\n"
+        "  --sdr-serial SERIAL  SDR device serial number\n"
+        "  --sdr-backend NAME   SDR backend: soapy (default), libiio, plutosdr\n"
         "  --verbose            Enable debug logging\n"
         "  --help               Show this help\n",
         prog);
@@ -113,6 +124,10 @@ int main(int argc, char* argv[]) {
     int web_port = 8080;
     bool verbose = false;
     bool no_audio = false;
+    bool no_sdr = false;
+    std::string sdr_driver;
+    std::string sdr_serial;
+    std::string sdr_backend = "soapy";
 
     /* Default SD card root: ~/.portapack */
     const char* home = getenv("HOME");
@@ -130,6 +145,14 @@ int main(int argc, char* argv[]) {
             web_port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--no-audio") == 0) {
             no_audio = true;
+        } else if (strcmp(argv[i], "--no-sdr") == 0) {
+            no_sdr = true;
+        } else if (strcmp(argv[i], "--sdr-driver") == 0 && i + 1 < argc) {
+            sdr_driver = argv[++i];
+        } else if (strcmp(argv[i], "--sdr-serial") == 0 && i + 1 < argc) {
+            sdr_serial = argv[++i];
+        } else if (strcmp(argv[i], "--sdr-backend") == 0 && i + 1 < argc) {
+            sdr_backend = argv[++i];
         } else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -138,7 +161,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    (void)web_port; /* Will be used by display shim */
+    /* web_port is used by WebUIServer below */
 
     /* Set up signal handlers */
     signal(SIGINT, signal_handler);
@@ -147,11 +170,20 @@ int main(int argc, char* argv[]) {
     /* Banner */
     fprintf(stderr,
         "=== Mayhem Firmware Linux Shim ===\n"
-        "SD card root: %s\n"
-        "Web UI port:  %d\n"
-        "Verbose:      %s\n"
+        "SD card root:  %s\n"
+        "Web UI port:   %d\n"
+        "SDR backend:   %s\n"
+        "SDR driver:    %s\n"
+        "SDR serial:    %s\n"
+        "SDR enabled:   %s\n"
+        "Verbose:       %s\n"
         "==================================\n",
-        sdcard_root.c_str(), web_port, verbose ? "yes" : "no");
+        sdcard_root.c_str(), web_port,
+        sdr_backend.c_str(),
+        sdr_driver.empty() ? "(auto)" : sdr_driver.c_str(),
+        sdr_serial.empty() ? "(any)" : sdr_serial.c_str(),
+        no_sdr ? "no" : "yes",
+        verbose ? "yes" : "no");
 
     /* Map LPC43xx backup RAM region at its hardware address.
      * The persistent_memory module stores settings here via a pointer
@@ -201,6 +233,33 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    /* Initialize Web UI server */
+    shim::WebUIServer::get().start(web_port);
+
+    /* Initialize SDR device */
+    std::unique_ptr<shim::SDRInterface> sdr_device;
+    if (!no_sdr) {
+        // Build device_args string from driver/serial
+        std::string device_args;
+        if (!sdr_driver.empty()) {
+            device_args += "driver=" + sdr_driver;
+        }
+        if (!sdr_serial.empty()) {
+            if (!device_args.empty()) device_args += ",";
+            device_args += "serial=" + sdr_serial;
+        }
+
+        sdr_device = shim::SDRInterface::create(sdr_backend, device_args);
+        if (sdr_device) {
+            shim::set_active_sdr(sdr_device.get());
+            fprintf(stderr, "[SDR] Connected to %s (%s)\n",
+                    sdr_device->get_hardware_name().c_str(),
+                    sdr_device->get_driver_name().c_str());
+        } else {
+            fprintf(stderr, "[SDR] No SDR device found — running without radio\n");
+        }
+    }
+
     fprintf(stderr, "[SHIM] Starting event loop...\n");
 
     /* Create UI context and system view */
@@ -222,6 +281,16 @@ int main(int argc, char* argv[]) {
 
     /* Start the event loop (blocks until shutdown) */
     event_dispatcher.run();
+
+    /* Shutdown Web UI */
+    shim::WebUIServer::get().stop();
+
+    /* Shutdown SDR */
+    if (sdr_device) {
+        shim::set_active_sdr(nullptr);
+        sdr_device->close();
+        sdr_device.reset();
+    }
 
     /* Shutdown audio */
     shim::AudioSink::get().shutdown();

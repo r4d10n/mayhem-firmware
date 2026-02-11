@@ -10,7 +10,7 @@
 
 #include "baseband_thread_shim.hpp"
 #include "processor_factory.hpp"
-#include "soapy_sdr_shim.hpp"
+#include "active_sdr.hpp"
 #include "portapack_shared_memory.hpp"
 #include "dsp_types.hpp"
 #include "message.hpp"
@@ -106,13 +106,16 @@ void BasebandThreadShim::thread_func() {
     static constexpr size_t BLOCK_SIZE = 1024;
     iq_sample_t iq_buffer[BLOCK_SIZE];
 
-    auto& sdr = SoapySDRShim::get();
-    const bool have_sdr = sdr.is_open();
+    auto* sdr = shim::active_sdr();
+    const bool have_sdr = sdr && sdr->is_open() && sdr->is_streaming();
 
     /* Timing: pace the loop to approximate real-time sample rate.
-     * Default to 3.072 MHz (common baseband rate).
-     * block_duration_us = BLOCK_SIZE / (samples_per_sec / 1e6) */
-    const long block_duration_us = (BLOCK_SIZE * 1000000L) / 3072000L;
+     * Read actual rate from SDR; default to 3.072 MHz if unavailable. */
+    double sample_rate = 3072000.0;
+    if (sdr && sdr->get_sample_rate() > 0) {
+        sample_rate = sdr->get_sample_rate();
+    }
+    const long block_duration_us = static_cast<long>((BLOCK_SIZE * 1000000.0) / sample_rate);
 
     while (!stop_requested_.load(std::memory_order_relaxed)) {
         auto loop_start = std::chrono::steady_clock::now();
@@ -124,7 +127,7 @@ void BasebandThreadShim::thread_func() {
 
         /* Read IQ samples from SDR or generate silence */
         if (have_sdr) {
-            int n = sdr.read_samples(iq_buffer, BLOCK_SIZE, 100000);
+            int n = sdr->read_samples(iq_buffer, BLOCK_SIZE, 100000);
             if (n <= 0) {
                 /* Read failed or timeout — fill with silence */
                 std::memset(iq_buffer, 0, sizeof(iq_buffer));
