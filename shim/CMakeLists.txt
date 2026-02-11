@@ -19,6 +19,7 @@ include_directories(BEFORE
 )
 
 include_directories(
+    ${SHIM}/display
     ${SHIM}/platform
     ${APP_DIR}
     ${APP_DIR}/ui
@@ -53,6 +54,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -Wall -Wextra -Wno-unused-paramet
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti -fno-exceptions")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0 -Wall -Wextra -Wno-unused-parameter")
 
+# ---- SDL2 ----
+find_package(SDL2 REQUIRED)
+
 # ---- Shim sources ----
 set(SHIM_SOURCES
     ${SHIM}/main_linux.cpp
@@ -62,6 +66,8 @@ set(SHIM_SOURCES
     ${SHIM}/platform/chibios_cpp_shim.cpp
     ${SHIM}/platform/shared_memory_shim.cpp
     ${SHIM}/drivers/hardware_stubs.cpp
+    ${SHIM}/display/framebuffer.cpp
+    ${SHIM}/display/sdl2_backend.cpp
 )
 
 # ---- Firmware common sources (application logic, not hardware) ----
@@ -233,9 +239,12 @@ add_executable(portapack-linux
     ${PROTOCOL_SOURCES}
 )
 
-target_link_libraries(portapack-linux
-    pthread
-)
+if (TARGET SDL2::SDL2)
+    target_link_libraries(portapack-linux SDL2::SDL2 pthread)
+else()
+    target_include_directories(portapack-linux PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(portapack-linux ${SDL2_LIBRARIES} pthread)
+endif()
 
 # Print a summary
 message(STATUS "=== Mayhem Linux Shim Build ===")

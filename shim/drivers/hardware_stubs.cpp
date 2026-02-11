@@ -12,6 +12,11 @@
 #include <cstring>
 #include <cstdarg>
 #include <cstdint>
+#include <ctime>
+
+/* Phase 2: framebuffer + SDL2 input state */
+#include "framebuffer.hpp"
+#include "sdl2_backend.hpp"
 
 /* ============================================================
  * LPC43xx register instances
@@ -48,6 +53,46 @@ RTCDriver  RTCD1 = {};
 
 /* Linker symbol stub (ARM linker script symbol, not meaningful on Linux) */
 uint32_t _textend = 0;
+
+/* ============================================================
+ * RTC sync — populate lpc_rtc_instance from system clock
+ * Called by rtcGetTime() in hal.h.
+ * Also updates the raw LPC_RTC register fields so direct reads
+ * of LPC_RTC->DOY etc. return correct values.
+ * ============================================================ */
+
+extern "C" void shim_rtc_sync(uint32_t* tv_date, uint32_t* tv_time) {
+    time_t now = time(nullptr);
+    struct tm* t = localtime(&now);
+    if (!t) {
+        if (tv_date) *tv_date = 0;
+        if (tv_time) *tv_time = 0;
+        return;
+    }
+
+    uint32_t year  = (uint32_t)(t->tm_year + 1900);
+    uint32_t month = (uint32_t)(t->tm_mon + 1);
+    uint32_t day   = (uint32_t)t->tm_mday;
+    uint32_t hour  = (uint32_t)t->tm_hour;
+    uint32_t min   = (uint32_t)t->tm_min;
+    uint32_t sec   = (uint32_t)t->tm_sec;
+
+    /* Pack into rtc::RTC format: tv_date = year<<16 | month<<8 | day
+     *                            tv_time = hour<<16 | min<<8   | sec  */
+    if (tv_date) *tv_date = (year << 16) | (month << 8) | day;
+    if (tv_time) *tv_time = (hour << 16) | (min << 8) | sec;
+
+    /* Also update the raw LPC_RTC register fields for code that
+     * reads LPC_RTC->DOY, LPC_RTC->SEC, etc. directly */
+    lpc_rtc_instance.SEC   = sec;
+    lpc_rtc_instance.MIN   = min;
+    lpc_rtc_instance.HRS   = hour;
+    lpc_rtc_instance.DOM   = day;
+    lpc_rtc_instance.DOW   = (uint32_t)t->tm_wday;
+    lpc_rtc_instance.DOY   = (uint32_t)(t->tm_yday + 1); /* tm_yday is 0-based, DOY is 1-based */
+    lpc_rtc_instance.MONTH = month;
+    lpc_rtc_instance.YEAR  = year;
+}
 
 /* sdcStart..sdcGetInfo, halLPCSetSystemClock, systick_adjust_period defined in hal_shim.cpp */
 
@@ -108,12 +153,17 @@ msg_t chOQPutTimeout(OutputQueue* oqp, uint8_t b, systime_t timeout) {
     return 0;
 }
 
-/* get_fattime for FatFs RTC support */
+/* get_fattime for FatFs RTC support — returns real system time */
 uint32_t get_fattime(void) {
-    /* Return a fixed timestamp: 2024-01-01 00:00:00 */
-    return ((uint32_t)(2024 - 1980) << 25) | ((uint32_t)1 << 21) |
-           ((uint32_t)1 << 16) | ((uint32_t)0 << 11) |
-           ((uint32_t)0 << 5) | ((uint32_t)0 >> 1);
+    time_t now = time(nullptr);
+    struct tm* t = localtime(&now);
+    if (!t) return 0;
+    return ((uint32_t)(t->tm_year + 1900 - 1980) << 25) |
+           ((uint32_t)(t->tm_mon + 1) << 21) |
+           ((uint32_t)t->tm_mday << 16) |
+           ((uint32_t)t->tm_hour << 11) |
+           ((uint32_t)t->tm_min << 5) |
+           ((uint32_t)(t->tm_sec / 2));
 }
 
 /* FatFs memory allocation (for LFN support) */
@@ -234,9 +284,9 @@ void setEventDispatcherToUSBSerial(EventDispatcher* evt) {
 } /* namespace portapack */
 
 /* ============================================================
- * LCD ILI9341 stubs
- * The display object needs its methods to exist.
- * In Phase 2, these will be replaced with WebSocket framebuffer.
+ * LCD ILI9341 — Phase 2: render to in-memory framebuffer
+ * All drawing writes to shim::Framebuffer; the SDL2 backend
+ * reads it to display pixels on screen.
  * ============================================================ */
 
 namespace lcd {
@@ -249,8 +299,8 @@ void ILI9341::sleep(bool) {}
 void ILI9341::wake(bool) {}
 
 void ILI9341::fill_rectangle(ui::Rect r, const ui::Color c) {
-    (void)r; (void)c;
-    /* Phase 2: render to framebuffer */
+    shim::Framebuffer::get().fill_rect(
+        r.left(), r.top(), r.width(), r.height(), c.v);
 }
 
 void ILI9341::fill_rectangle_unrolled8(ui::Rect r, const ui::Color c) {
@@ -258,7 +308,8 @@ void ILI9341::fill_rectangle_unrolled8(ui::Rect r, const ui::Color c) {
 }
 
 void ILI9341::draw_line(const ui::Point start, const ui::Point end, const ui::Color color) {
-    (void)start; (void)end; (void)color;
+    shim::Framebuffer::get().draw_line(
+        start.x(), start.y(), end.x(), end.y(), color.v);
 }
 
 void ILI9341::fill_circle(
@@ -266,36 +317,68 @@ void ILI9341::fill_circle(
     const ui::Dim radius,
     const ui::Color foreground,
     const ui::Color background) {
-    (void)center; (void)radius; (void)foreground; (void)background;
+    shim::Framebuffer::get().fill_circle(
+        center.x(), center.y(), radius, foreground.v, background.v);
 }
 
 void ILI9341::draw_pixel(const ui::Point p, const ui::Color color) {
-    (void)p; (void)color;
+    shim::Framebuffer::get().set_pixel(p.x(), p.y(), color.v);
 }
 
 void ILI9341::draw_bmp_from_bmp_hex_arr(const ui::Point p, const uint8_t* bitmap, const uint8_t* transparency_color) {
+    /* BMP header parsing — delegates to draw_pixel/render_line which now work.
+     * Left as no-op; the real firmware implementation calls other ILI9341 methods
+     * that are themselves wired to the framebuffer. */
     (void)p; (void)bitmap; (void)transparency_color;
 }
 
 bool ILI9341::draw_bmp_from_sdcard_file(const ui::Point p, const std::filesystem::path& file) {
+    /* Delegates to render_line internally — left as no-op for now. */
     (void)p; (void)file;
     return false;
 }
 
 void ILI9341::render_line(const ui::Point p, const uint16_t count, const ui::Color* line_buffer) {
-    (void)p; (void)count; (void)line_buffer;
+    auto& fb = shim::Framebuffer::get();
+    for (uint16_t i = 0; i < count; i++) {
+        fb.set_pixel(p.x() + i, p.y(), line_buffer[i].v);
+    }
 }
 
 void ILI9341::render_box(const ui::Point p, const ui::Size s, const ui::Color* line_buffer) {
-    (void)p; (void)s; (void)line_buffer;
+    auto& fb = shim::Framebuffer::get();
+    size_t idx = 0;
+    for (int row = 0; row < s.height(); row++) {
+        for (int col = 0; col < s.width(); col++) {
+            fb.set_pixel(p.x() + col, p.y() + row, line_buffer[idx].v);
+            idx++;
+        }
+    }
 }
 
 void ILI9341::draw_pixels(const ui::Rect r, const ui::Color* const colors, const size_t count) {
-    (void)r; (void)colors; (void)count;
+    auto& fb = shim::Framebuffer::get();
+    size_t idx = 0;
+    for (int row = 0; row < r.height() && idx < count; row++) {
+        for (int col = 0; col < r.width() && idx < count; col++) {
+            fb.set_pixel(r.left() + col, r.top() + row, colors[idx].v);
+            idx++;
+        }
+    }
 }
 
 void ILI9341::read_pixels(const ui::Rect r, ui::ColorRGB888* const colors, const size_t count) {
-    (void)r; (void)colors; (void)count;
+    auto& fb = shim::Framebuffer::get();
+    size_t idx = 0;
+    for (int row = 0; row < r.height() && idx < count; row++) {
+        for (int col = 0; col < r.width() && idx < count; col++) {
+            uint16_t rgb565 = fb.read_pixel(r.left() + col, r.top() + row);
+            colors[idx].r = (rgb565 >> 8) & 0xF8;
+            colors[idx].g = (rgb565 >> 3) & 0xFC;
+            colors[idx].b = (rgb565 << 3) & 0xF8;
+            idx++;
+        }
+    }
 }
 
 void ILI9341::draw_bitmap(
@@ -305,7 +388,9 @@ void ILI9341::draw_bitmap(
     const ui::Color foreground,
     const ui::Color background,
     uint8_t zoom_level) {
-    (void)p; (void)size; (void)data; (void)foreground; (void)background; (void)zoom_level;
+    shim::Framebuffer::get().draw_bitmap(
+        p.x(), p.y(), size.width(), size.height(),
+        data, foreground.v, background.v, zoom_level);
 }
 
 void ILI9341::draw_glyph(
@@ -314,29 +399,45 @@ void ILI9341::draw_glyph(
     const ui::Color foreground,
     const ui::Color background,
     uint8_t zoom_level) {
-    (void)p; (void)glyph; (void)foreground; (void)background; (void)zoom_level;
+    shim::Framebuffer::get().draw_bitmap(
+        p.x(), p.y(), glyph.w(), glyph.h(),
+        glyph.pixels(), foreground.v, background.v, zoom_level);
 }
 
 void ILI9341::scroll_set_area(const ui::Coord top_y, const ui::Coord bottom_y) {
-    (void)top_y; (void)bottom_y;
+    scroll_state.top_area = top_y;
+    scroll_state.bottom_area = bottom_y;
+    scroll_state.height = height() - top_y - bottom_y;
+    scroll_state.current_position = 0;
 }
 
 ui::Coord ILI9341::scroll_set_position(const ui::Coord position) {
-    (void)position;
-    return 0;
+    scroll_state.current_position = position;
+    return position;
 }
 
 void ILI9341::scroll_disable() {
+    scroll_state.top_area = 0;
+    scroll_state.bottom_area = 0;
+    scroll_state.height = height();
+    scroll_state.current_position = 0;
 }
 
 ui::Coord ILI9341::scroll(const int32_t delta) {
-    (void)delta;
-    return 0;
+    if (scroll_state.height > 0) {
+        scroll_state.current_position =
+            (scroll_state.current_position + delta) % scroll_state.height;
+        if (scroll_state.current_position < 0)
+            scroll_state.current_position += scroll_state.height;
+    }
+    return scroll_state.current_position;
 }
 
 ui::Coord ILI9341::scroll_area_y(const ui::Coord y) const {
-    (void)y;
-    return 0;
+    if (scroll_state.height <= 0) return y;
+    int wrapped = (scroll_state.current_position + y) % scroll_state.height;
+    if (wrapped < 0) wrapped += scroll_state.height;
+    return wrapped + scroll_state.top_area;
 }
 
 } /* namespace lcd */
@@ -516,7 +617,7 @@ void set_rate(Rate rate) { (void)rate; }
 } /* namespace audio */
 
 /* ============================================================
- * Touch interface stubs
+ * Touch interface — Phase 2: SDL2 mouse → touch events
  * ============================================================ */
 
 #include "touch.hpp"
@@ -524,49 +625,87 @@ void set_rate(Rate rate) { (void)rate; }
 namespace touch {
 
 Metrics calculate_metrics(const Frame& frame) {
-    (void)frame;
+    if (frame.touch) {
+        return Metrics{
+            static_cast<float>(frame.x.xp),
+            static_cast<float>(frame.y.xp),
+            100.0f};
+    }
     return Metrics{0.0f, 0.0f, 0.0f};
 }
 
 ui::Point Calibration::translate(const DigitizerPoint& p) const {
-    (void)p;
-    return {0, 0};
+    /* Our shim puts screen coordinates directly — identity transform */
+    return {static_cast<int>(p.x), static_cast<int>(p.y)};
 }
 
 void Manager::feed(const Frame& frame) {
-    (void)frame;
+    /* Simplified touch pipeline: fire events directly from frame state.
+     * The real firmware uses filters and debouncing; for the shim,
+     * we get clean coordinates from the mouse so none of that is needed. */
+    static bool was_touching = false;
+
+    if (frame.touch) {
+        ui::Point p{static_cast<int>(frame.x.xp),
+                     static_cast<int>(frame.y.xp)};
+        if (on_event) {
+            auto type = was_touching
+                            ? ui::TouchEvent::Type::Move
+                            : ui::TouchEvent::Type::Start;
+            on_event({p, type});
+        }
+        was_touching = true;
+    } else {
+        if (was_touching && on_event) {
+            on_event({{0, 0}, ui::TouchEvent::Type::End});
+        }
+        was_touching = false;
+    }
 }
 
 } /* namespace touch */
 
 touch::Frame get_touch_frame() {
-    touch::Frame f = {{0, 0, 0, 0}};
+    touch::Frame f;
+    f.touch = shim::g_input.touch_active.load(std::memory_order_relaxed);
+    int16_t tx = shim::g_input.touch_x.load(std::memory_order_relaxed);
+    int16_t ty = shim::g_input.touch_y.load(std::memory_order_relaxed);
+    f.x = touch::Samples{
+        static_cast<uint32_t>(tx >= 0 ? tx : 0), 0, 0, 0};
+    f.y = touch::Samples{
+        static_cast<uint32_t>(ty >= 0 ? ty : 0), 0, 0, 0};
     return f;
 }
 
 /* ============================================================
- * Control/switch stubs
+ * Control/switch — Phase 2: SDL2 keyboard/mouse → switches/encoder
  * ============================================================ */
 
-#include <bitset>
+#include "irq_controls.hpp"
 
-enum class Switch : uint8_t {
-    Right = 0, Left = 1, Down = 2, Up = 3, Sel = 4, Dfu = 5, RotA = 6, RotB = 7
-};
+SwitchesState get_switches_state() {
+    return SwitchesState(shim::g_input.switches.load(std::memory_order_relaxed));
+}
 
-uint8_t get_switches_state() { return 0; }
-uint32_t swizzled_switches() { return 0; }
-uint8_t get_encoder_position() { return 0; }
+uint8_t swizzled_switches() {
+    return shim::g_input.switches.load(std::memory_order_relaxed);
+}
+
+EncoderPosition get_encoder_position() {
+    return shim::g_input.encoder.load(std::memory_order_relaxed);
+}
+
 bool switch_is_long_pressed(Switch s) { (void)s; return false; }
 
-std::bitset<6> get_switches_long_press_config() { return 0; }
-void set_switches_long_press_config(std::bitset<6> cfg) { (void)cfg; }
-std::bitset<6> get_switches_repeat_config() { return 0; }
-void set_switches_repeat_config(std::bitset<6> cfg) { (void)cfg; }
+SwitchesState get_switches_long_press_config() { return 0; }
+void set_switches_long_press_config(SwitchesState cfg) { (void)cfg; }
+SwitchesState get_switches_repeat_config() { return 0; }
+void set_switches_repeat_config(SwitchesState cfg) { (void)cfg; }
 
 namespace control {
 namespace debug {
-    uint32_t switches() { return 0; }
+    uint8_t switches() { return shim::g_input.switches.load(std::memory_order_relaxed); }
+    void inject_switch(uint8_t v) { (void)v; }
 }
 }
 
@@ -623,13 +762,17 @@ void I2cDev_SHT4x::update() {}
 
 namespace battery {
 
-bool BatteryManagement::isDetected() { return false; }
+bool BatteryManagement::isDetected() { return true; }
 void BatteryManagement::set_calc_override(bool v) { (void)v; }
 void BatteryManagement::getBatteryInfo(uint8_t& valid_mask, uint8_t& percent, uint16_t& voltage, int32_t& current) {
-    valid_mask = 0; percent = 0; voltage = 0; current = 0;
+    /* Simulate fully-charged AC-powered state */
+    valid_mask = 0x07; /* voltage + percent + current all valid */
+    percent = 100;
+    voltage = 4200;    /* 4.2V = full LiPo */
+    current = 0;       /* no draw — on AC power */
 }
-float BatteryManagement::get_tte() { return 0.0f; }
-float BatteryManagement::get_ttf() { return 0.0f; }
+float BatteryManagement::get_tte() { return 9999.0f; }  /* "infinite" time-to-empty */
+float BatteryManagement::get_ttf() { return 0.0f; }     /* already full */
 
 } /* namespace battery */
 

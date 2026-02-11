@@ -19,6 +19,7 @@
 #include <string>
 #include <csignal>
 #include <sys/stat.h>
+#include <sys/mman.h>
 
 /* Firmware includes */
 #include "portapack.hpp"
@@ -32,6 +33,9 @@
 #include "irq_controls.hpp"
 #include "sd_card.hpp"
 #include "theme.hpp"
+
+/* SDL2 display backend */
+#include "sdl2_backend.hpp"
 
 /* Shim-specific declarations */
 extern "C" void fatfs_shim_set_root(const char* root);
@@ -143,6 +147,28 @@ int main(int argc, char* argv[]) {
         "==================================\n",
         sdcard_root.c_str(), web_port, verbose ? "yes" : "no");
 
+    /* Map LPC43xx backup RAM region at its hardware address.
+     * The persistent_memory module stores settings here via a pointer
+     * derived from LPC_BACKUP_REG_BASE (0x40041000). On Linux this
+     * address is unmapped, so we mmap a page to make it valid. */
+    {
+        const uintptr_t backup_page = 0x40041000u & ~0xFFFu;  /* page-align */
+        void* p = mmap(reinterpret_cast<void*>(backup_page), 4096,
+                       PROT_READ | PROT_WRITE,
+                       MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED_NOREPLACE,
+                       -1, 0);
+        if (p == MAP_FAILED) {
+            /* Fall back to MAP_FIXED if MAP_FIXED_NOREPLACE unavailable */
+            p = mmap(reinterpret_cast<void*>(backup_page), 4096,
+                     PROT_READ | PROT_WRITE,
+                     MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
+                     -1, 0);
+        }
+        if (p == MAP_FAILED) {
+            fprintf(stderr, "[SHIM] Warning: mmap backup RAM failed\n");
+        }
+    }
+
     /* Initialize ChibiOS shim */
     chSysInit();
 
@@ -155,6 +181,10 @@ int main(int argc, char* argv[]) {
 
     /* Initialize theme with default */
     Theme::SetTheme(Theme::ThemeId::DefaultGrey);
+
+    /* Initialize SDL2 display backend */
+    shim::SDL2Backend::get().init(240, 320, 2);
+    shim::SDL2Backend::get().start();
 
     fprintf(stderr, "[SHIM] Starting event loop...\n");
 
@@ -177,6 +207,9 @@ int main(int argc, char* argv[]) {
 
     /* Start the event loop (blocks until shutdown) */
     event_dispatcher.run();
+
+    /* Shutdown SDL2 backend */
+    shim::SDL2Backend::get().stop();
 
     /* Cleanup */
     sdcDisconnect(&SDCD1);

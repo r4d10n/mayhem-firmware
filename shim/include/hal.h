@@ -229,12 +229,19 @@ extern RTCDriver RTCD1;
 extern "C" {
 #endif
 
+/* Declared in hardware_stubs.cpp — syncs lpc_rtc_instance from system clock
+ * and returns packed tv_date / tv_time values. */
+void shim_rtc_sync(uint32_t* tv_date, uint32_t* tv_time);
+
 static inline void rtcGetTime(RTCDriver* rtcp, RTCTime* timespec) {
     (void)rtcp;
-    if (timespec) { timespec->tv_date = 0; timespec->tv_time = 0; }
+    if (timespec) {
+        shim_rtc_sync(&timespec->tv_date, &timespec->tv_time);
+    }
 }
 static inline void rtcSetTime(RTCDriver* rtcp, const RTCTime* timespec) {
     (void)rtcp; (void)timespec;
+    /* No-op: system clock is authoritative on Linux */
 }
 
 #ifdef __cplusplus
