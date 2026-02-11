@@ -9,6 +9,7 @@
 
 #ifdef LINUX_SHIM
 #include "external_app_registry.hpp"
+#include "baseband_thread_shim.hpp"
 #endif
 
 namespace ui {
@@ -134,8 +135,13 @@ namespace ui {
         gridItem.bitmap = dyn_bmp.bitmap();
         bitmaps.push_back(std::move(dyn_bmp));
 
-        /* Direct function call — no file loading or relocation needed */
+        /* Direct function call — no file loading or relocation needed.
+         * Store the M4 image tag so m4_init_prepared() can start
+         * the correct baseband processor when the app calls
+         * run_prepared_image(). */
         gridItem.on_select = [&nav, app_info]() {
+            shim::BasebandThreadShim::get().set_pending_tag(
+                app_info->m4_app_tag);
             app_info->externalAppEntry(nav);
         };
 

@@ -35,15 +35,30 @@ public:
     /* Is a processor currently running? */
     bool is_running() const { return running_.load(std::memory_order_relaxed); }
 
+    /* Store the image tag for a subsequent start_pending() call.
+     * Called by the external app loader before externalAppEntry(). */
+    void set_pending_tag(const portapack::spi_flash::image_tag_t& tag) {
+        pending_tag_ = tag;
+        has_pending_tag_ = true;
+    }
+
+    /* Start the processor using the previously stored pending tag.
+     * Called by m4_init_prepared(). */
+    void start_pending();
+
 private:
     BasebandThreadShim() = default;
 
     void thread_func();
+    void dispatch_message();
 
     std::unique_ptr<BasebandProcessor> processor_;
     std::thread thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_requested_{false};
+
+    portapack::spi_flash::image_tag_t pending_tag_{};
+    bool has_pending_tag_{false};
 };
 
 } // namespace shim

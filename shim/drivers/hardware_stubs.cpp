@@ -14,9 +14,10 @@
 #include <cstdint>
 #include <ctime>
 
-/* SDR + baseband integration */
+/* SDR + baseband + audio integration */
 #include "soapy_sdr_shim.hpp"
 #include "baseband_thread_shim.hpp"
+#include "audio_sink.hpp"
 
 /* Phase 2: framebuffer + SDL2 input state */
 #include "framebuffer.hpp"
@@ -500,8 +501,17 @@ void enable(const void*) {}
 
 namespace audio {
 namespace output {
-    void start() {}
-    void stop() {}
+    void start() {
+        /* Ensure AudioSink is initialized when audio output is requested */
+        auto& sink = shim::AudioSink::get();
+        if (!sink.is_initialized()) {
+            sink.init(48000, 1024);
+        }
+    }
+    void stop() {
+        /* Don't shutdown AudioSink — just let it drain.
+         * Other apps may reuse it immediately. */
+    }
     void mute() {}
     void unmute() {}
 } /* namespace output */
@@ -1035,6 +1045,10 @@ void m4_init(const portapack::spi_flash::image_tag_t image_tag,
 
 void m4_init_prepared(const uint32_t m4_code, const bool full_reset) {
     (void)m4_code; (void)full_reset;
+    /* External apps call run_prepared_image() which arrives here.
+     * The app loader stored the m4_app_tag via set_pending_tag(),
+     * so start the corresponding processor now. */
+    shim::BasebandThreadShim::get().start_pending();
 }
 
 /* ============================================================

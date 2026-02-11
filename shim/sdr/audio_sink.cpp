@@ -94,8 +94,8 @@ void AudioSink::fill_audio(uint8_t* stream, int len) {
         std::memset(&out[frames_to_copy], 0, (frames_requested - frames_to_copy) * sizeof(AudioSample));
     }
 
-    // Mix beep tone if active
-    if (beep_active_.load(std::memory_order_relaxed)) {
+    // Mix beep tone if active (acquire to see writes from beep_start)
+    if (beep_active_.load(std::memory_order_acquire)) {
         for (size_t i = 0; i < frames_requested && beep_samples_remaining_ > 0; i++) {
             // Generate sine wave at beep_freq_
             float t = static_cast<float>(beep_phase_) / static_cast<float>(beep_rate_);
@@ -159,9 +159,10 @@ void AudioSink::write(const AudioSample* samples, size_t count) {
 }
 
 void AudioSink::beep_start(uint32_t freq_hz, uint32_t sample_rate, uint32_t duration_ms) {
+    (void)sample_rate;  /* Use actual SDL output rate for correct pitch */
     beep_freq_ = freq_hz;
-    beep_rate_ = sample_rate;
-    beep_duration_samples_ = (duration_ms * sample_rate) / 1000;
+    beep_rate_ = sample_rate_;  /* SDL output rate (48000), not message rate */
+    beep_duration_samples_ = (duration_ms * sample_rate_) / 1000;
     beep_phase_ = 0;
     beep_samples_remaining_ = beep_duration_samples_;
     beep_active_.store(true, std::memory_order_release);

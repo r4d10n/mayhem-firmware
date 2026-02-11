@@ -13,6 +13,7 @@
 #include "soapy_sdr_shim.hpp"
 #include "portapack_shared_memory.hpp"
 #include "dsp_types.hpp"
+#include "message.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -44,6 +45,9 @@ void BasebandThreadShim::start(const portapack::spi_flash::image_tag_t& tag) {
 
     fprintf(stderr, "[Baseband] Starting processor: %s\n", processor_name(tag));
 
+    /* Clear any stale message pointer before starting */
+    shared_memory.baseband_message = nullptr;
+
     stop_requested_.store(false);
     running_.store(true);
 
@@ -52,6 +56,15 @@ void BasebandThreadShim::start(const portapack::spi_flash::image_tag_t& tag) {
 
     /* Start the processing thread */
     thread_ = std::thread(&BasebandThreadShim::thread_func, this);
+}
+
+void BasebandThreadShim::start_pending() {
+    if (!has_pending_tag_) {
+        fprintf(stderr, "[Baseband] start_pending() called with no pending tag\n");
+        return;
+    }
+    has_pending_tag_ = false;
+    start(pending_tag_);
 }
 
 void BasebandThreadShim::stop() {
@@ -67,6 +80,23 @@ void BasebandThreadShim::stop() {
     running_.store(false);
 
     fprintf(stderr, "[Baseband] Processor stopped\n");
+}
+
+void BasebandThreadShim::dispatch_message() {
+    /* Mirror what event_m4.cpp EventDispatcher::handle_baseband_queue() does:
+     * Read the message pointer, dispatch to processor, then clear it so
+     * send_message() on the M0 side stops spinning. */
+    const auto* message = shared_memory.baseband_message;
+    if (!message) return;
+
+    if (message->id == Message::ID::Shutdown) {
+        stop_requested_.store(true, std::memory_order_relaxed);
+    } else if (processor_) {
+        processor_->on_message(message);
+    }
+
+    /* Clear the pointer — this unblocks send_message() on the M0 thread */
+    shared_memory.baseband_message = nullptr;
 }
 
 void BasebandThreadShim::thread_func() {
@@ -87,6 +117,11 @@ void BasebandThreadShim::thread_func() {
     while (!stop_requested_.load(std::memory_order_relaxed)) {
         auto loop_start = std::chrono::steady_clock::now();
 
+        /* Check for messages from M0 (beep requests, config, shutdown, etc.)
+         * This must happen BEFORE execute() so configuration messages
+         * are applied before the next sample block is processed. */
+        dispatch_message();
+
         /* Read IQ samples from SDR or generate silence */
         if (have_sdr) {
             int n = sdr.read_samples(iq_buffer, BLOCK_SIZE, 100000);
@@ -106,6 +141,10 @@ void BasebandThreadShim::thread_func() {
             BLOCK_SIZE
         };
         processor_->execute(buffer);
+
+        /* Check messages again after execute() — handles the case where
+         * the M0 thread posted a message while we were processing */
+        dispatch_message();
 
         /* Pace the loop to avoid spinning when no SDR is attached */
         if (!have_sdr) {
