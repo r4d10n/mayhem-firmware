@@ -38,11 +38,23 @@ public:
     // Volume/rate control
     void set_rate(uint32_t sample_rate);
 
+    // WebUI audio routing
+    void set_webui_active(bool active);
+    bool is_webui_active() const { return webui_active_.load(std::memory_order_relaxed); }
+
+    // Audio output drain (used by WebUI to consume instead of SDL2)
+    size_t read_output(AudioSample* buffer, size_t max_count);
+
+    // Audio input (from WebUI microphone)
+    void write_input(const AudioSample* samples, size_t count);
+    size_t read_input(AudioSample* buffer, size_t max_count);
+
 private:
     AudioSink() = default;
 
     static void sdl_audio_callback(void* userdata, uint8_t* stream, int len);
     void fill_audio(uint8_t* stream, int len);
+    void mix_beep(AudioSample* out, size_t frames);
 
     // Lock-free SPSC ring buffer
     static constexpr size_t RING_SIZE = 16384;  // Must be power of 2
@@ -50,8 +62,15 @@ private:
     std::atomic<size_t> write_pos_{0};
     std::atomic<size_t> read_pos_{0};
 
+    // Input ring buffer (separate from output ring)
+    std::vector<AudioSample> input_ring_;
+    std::atomic<size_t> input_write_pos_{0};
+    std::atomic<size_t> input_read_pos_{0};
+
     uint32_t device_id_ = 0;  // SDL_AudioDeviceID
     uint32_t sample_rate_ = 48000;
+
+    std::atomic<bool> webui_active_{false};
 
     // Beep state
     std::atomic<bool> beep_active_{false};

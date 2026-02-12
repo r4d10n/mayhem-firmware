@@ -70,8 +70,14 @@ audio::buffer_t tx_empty_buffer() {
 }
 
 audio::buffer_t rx_empty_buffer() {
-    /* For RX (microphone input), return silence for now */
-    std::memset(rx_buffer.data(), 0, sizeof(rx_buffer));
+    /* Read audio input from AudioSink's input ring (fed by WebUI or silence) */
+    auto& sink = shim::AudioSink::get();
+    auto* samples = reinterpret_cast<shim::AudioSample*>(rx_buffer.data());
+    size_t got = sink.read_input(samples, BLOCK_SIZE);
+    /* Zero-fill any remaining samples */
+    if (got < BLOCK_SIZE) {
+        std::memset(&rx_buffer[got], 0, (BLOCK_SIZE - got) * sizeof(audio::sample_t));
+    }
     return { rx_buffer.data(), BLOCK_SIZE };
 }
 

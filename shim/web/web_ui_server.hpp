@@ -37,6 +37,9 @@ class WebUIServer {
      * Compares against the previous frame and sends deltas. */
     void push_frame(const uint16_t* rgb565, int width, int height);
 
+    /* Audio streaming */
+    bool has_audio_clients() const;
+
    private:
     WebUIServer() = default;
     ~WebUIServer();
@@ -50,6 +53,7 @@ class WebUIServer {
     bool send_websocket_frame(int fd, const uint8_t* data, size_t len, uint8_t opcode);
     void send_http_response(int fd, const char* content_type, const char* body, size_t body_len);
     void process_websocket_message(int fd, const uint8_t* data, size_t len, uint8_t opcode);
+    void process_binary_message(const uint8_t* data, size_t len);
     void remove_client(int idx);
     void broadcast_frame(const uint8_t* data, size_t len);
 
@@ -73,6 +77,9 @@ class WebUIServer {
     Client clients_[MAX_CLIENTS];
     int client_count_ = 0;
     std::mutex clients_mutex_;
+
+    /* Audio state */
+    bool audio_streaming_ = false;
 
     /* Previous frame for delta encoding */
     std::vector<uint16_t> prev_frame_;

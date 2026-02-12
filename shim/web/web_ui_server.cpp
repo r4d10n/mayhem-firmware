@@ -22,6 +22,7 @@
 #include "sdl2_backend.hpp"   /* shim::g_input, InputState */
 #include "framebuffer.hpp"
 #include "event_m0.hpp"       /* EventDispatcher::events_flag, EVT_MASK_* */
+#include "audio_sink.hpp"     /* shim::AudioSink for WebUI audio routing */
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -447,6 +448,15 @@ void WebUIServer::handle_client_data(int idx) {
                     if (websocket_handshake(c.fd)) {
                         c.websocket_ready = true;
                         c.needs_full_frame = true;
+                        /* If this is the first WS client, switch audio to WebUI mode */
+                        bool had_ws = false;
+                        for (int i = 0; i < client_count_; i++) {
+                            if (i != idx && clients_[i].websocket_ready) { had_ws = true; break; }
+                        }
+                        if (!had_ws) {
+                            shim::AudioSink::get().set_webui_active(true);
+                            audio_streaming_ = true;
+                        }
                     } else {
                         remove_client(idx);
                         return;
@@ -520,9 +530,12 @@ void WebUIServer::handle_client_data(int idx) {
             } else if (opcode == 0x09) {
                 /* Ping — send pong */
                 send_websocket_frame(c.fd, payload.data(), payload.size(), 0x0A);
-            } else if (opcode == 0x01 || opcode == 0x02) {
-                /* Text or binary message */
+            } else if (opcode == 0x01) {
+                /* Text message */
                 process_websocket_message(c.fd, payload.data(), payload.size(), opcode);
+            } else if (opcode == 0x02) {
+                /* Binary message — audio input from WebUI */
+                process_binary_message(payload.data(), payload.size());
             }
 
             /* Remove processed frame from buffer */
@@ -709,6 +722,37 @@ void WebUIServer::process_websocket_message(int fd, const uint8_t* data,
     }
 }
 
+void WebUIServer::process_binary_message(const uint8_t* data, size_t len) {
+    if (len < 3) return;
+
+    uint8_t type = data[0];
+    if (type == 0x04) {
+        /* Audio input from WebUI microphone: [0x04][count:u16LE][samples:i16LE mono] */
+        uint16_t count = (uint16_t)data[1] | ((uint16_t)data[2] << 8);
+        size_t expected = 3 + (size_t)count * 2;
+        if (len < expected) return;
+
+        const int16_t* mono = reinterpret_cast<const int16_t*>(data + 3);
+
+        /* Convert mono to stereo (duplicate L->R) */
+        std::vector<shim::AudioSample> stereo(count);
+        for (uint16_t i = 0; i < count; i++) {
+            stereo[i].left = mono[i];
+            stereo[i].right = mono[i];
+        }
+
+        shim::AudioSink::get().write_input(stereo.data(), count);
+    }
+}
+
+bool WebUIServer::has_audio_clients() const {
+    /* Note: caller should hold clients_mutex_ or accept a racy read */
+    for (int i = 0; i < client_count_; i++) {
+        if (clients_[i].websocket_ready) return true;
+    }
+    return false;
+}
+
 void WebUIServer::remove_client(int idx) {
     /* Called with clients_mutex_ held */
     if (idx < 0 || idx >= client_count_) return;
@@ -721,6 +765,16 @@ void WebUIServer::remove_client(int idx) {
     }
     client_count_--;
     fprintf(stderr, "[WebUI] Client disconnected (%d remaining)\n", client_count_);
+
+    /* If no more WS clients, switch audio back to SDL2 */
+    bool any_ws = false;
+    for (int i = 0; i < client_count_; i++) {
+        if (clients_[i].fd >= 0 && clients_[i].websocket_ready) { any_ws = true; break; }
+    }
+    if (!any_ws && audio_streaming_) {
+        shim::AudioSink::get().set_webui_active(false);
+        audio_streaming_ = false;
+    }
 }
 
 void WebUIServer::push_frame(const uint16_t* rgb565, int width, int height) {
@@ -783,6 +837,33 @@ void WebUIServer::push_frame(const uint16_t* rgb565, int width, int height) {
     /* Remove dead clients in reverse order (remove_client swaps with last) */
     for (int d = dead_count - 1; d >= 0; d--) {
         remove_client(dead[d]);
+    }
+
+    /* Drain audio output and send to WebSocket clients */
+    if (audio_streaming_) {
+        auto& sink = shim::AudioSink::get();
+        if (sink.is_webui_active()) {
+            shim::AudioSample audio_buf[2048];
+            size_t got = sink.read_output(audio_buf, 2048);
+            if (got > 0) {
+                /* Build audio frame: [0x03][count:u16LE][samples:i16LE interleaved L,R,...] */
+                std::vector<uint8_t> audio_frame;
+                audio_frame.reserve(3 + got * sizeof(shim::AudioSample));
+                audio_frame.push_back(0x03);  /* Audio output type */
+                uint16_t count16 = (uint16_t)got;
+                audio_frame.push_back(count16 & 0xFF);
+                audio_frame.push_back((count16 >> 8) & 0xFF);
+                auto* raw = reinterpret_cast<const uint8_t*>(audio_buf);
+                audio_frame.insert(audio_frame.end(), raw, raw + got * sizeof(shim::AudioSample));
+
+                /* Send to all WebSocket clients */
+                for (int i = 0; i < client_count_; i++) {
+                    if (clients_[i].websocket_ready) {
+                        send_websocket_frame(clients_[i].fd, audio_frame.data(), audio_frame.size(), 0x02);
+                    }
+                }
+            }
+        }
     }
 
     /* Update previous frame */
@@ -941,6 +1022,10 @@ h1{color:#e94560;font-size:18px;margin:8px 0}
  <div class="btn" id="btn-enc-left" data-enc="-1">&#8634; ENC</div>
  <div class="btn" id="btn-enc-right" data-enc="1">ENC &#8635;</div>
 </div>
+<div class="row">
+ <div class="btn" id="btn-audio" style="background:#0a7e8c">&#128264; Audio</div>
+ <div class="btn" id="btn-mic">&#127908; Mic</div>
+</div>
 <div id="info">Keyboard: Arrows/WASD=DPad, Enter=Select, Esc=Back, Scroll=Encoder<br>Click/tap screen for touch</div>
 <script>
 (function(){
@@ -967,6 +1052,116 @@ for(var i=0;i<240*320*4;i+=4){
 }
 ctx.putImageData(imageData,0,0);
 
+/* ---- Web Audio ---- */
+var audioCtx=null,audioNode=null;
+var pcmQueue=[];
+var pcmReadPos=0;
+var audioEnabled=false;
+var micStream=null,micNode=null,micSource=null;
+var micEnabled=false;
+
+function initAudio(){
+ if(audioCtx) return;
+ audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+ audioNode=audioCtx.createScriptProcessor(2048,0,2);
+ audioNode.onaudioprocess=function(e){
+  var outL=e.outputBuffer.getChannelData(0);
+  var outR=e.outputBuffer.getChannelData(1);
+  var written=0;
+  while(written<outL.length&&pcmQueue.length>0){
+   var chunk=pcmQueue[0];
+   var avail=chunk.left.length-pcmReadPos;
+   var toCopy=Math.min(avail,outL.length-written);
+   for(var i=0;i<toCopy;i++){
+    outL[written+i]=chunk.left[pcmReadPos+i];
+    outR[written+i]=chunk.right[pcmReadPos+i];
+   }
+   written+=toCopy;
+   pcmReadPos+=toCopy;
+   if(pcmReadPos>=chunk.left.length){
+    pcmQueue.shift();
+    pcmReadPos=0;
+   }
+  }
+  for(var i=written;i<outL.length;i++){
+   outL[i]=0;outR[i]=0;
+  }
+ };
+ audioNode.connect(audioCtx.destination);
+ audioEnabled=true;
+ document.getElementById('btn-audio').style.background='#e94560';
+}
+
+function handleAudio(view){
+ if(!audioCtx) return;
+ var count=view.getUint16(1,true);
+ var left=new Float32Array(count);
+ var right=new Float32Array(count);
+ for(var i=0;i<count;i++){
+  left[i]=view.getInt16(3+i*4,true)/32768.0;
+  right[i]=view.getInt16(3+i*4+2,true)/32768.0;
+ }
+ pcmQueue.push({left:left,right:right});
+ while(pcmQueue.length>15) pcmQueue.shift();
+}
+
+function startMic(){
+ if(!audioCtx) initAudio();
+ navigator.mediaDevices.getUserMedia({audio:{sampleRate:48000,channelCount:1}})
+ .then(function(stream){
+  micStream=stream;
+  micSource=audioCtx.createMediaStreamSource(stream);
+  micNode=audioCtx.createScriptProcessor(2048,1,1);
+  micNode.onaudioprocess=function(e){
+   var input=e.inputBuffer.getChannelData(0);
+   if(ws&&ws.readyState===1){
+    var buf=new ArrayBuffer(3+input.length*2);
+    var dv=new DataView(buf);
+    dv.setUint8(0,0x04);
+    dv.setUint16(1,input.length,true);
+    for(var i=0;i<input.length;i++){
+     dv.setInt16(3+i*2,Math.max(-32768,Math.min(32767,input[i]*32768))|0,true);
+    }
+    ws.send(buf);
+   }
+  };
+  micSource.connect(micNode);
+  micNode.connect(audioCtx.destination);
+  micEnabled=true;
+  document.getElementById('btn-mic').style.background='#e94560';
+ }).catch(function(err){
+  console.error('Mic error:',err);
+ });
+}
+
+function stopMic(){
+ if(micNode){micNode.disconnect();micNode=null;}
+ if(micSource){micSource.disconnect();micSource=null;}
+ if(micStream){micStream.getTracks().forEach(function(t){t.stop();});micStream=null;}
+ micEnabled=false;
+ document.getElementById('btn-mic').style.background='';
+}
+
+/* Audio button */
+document.getElementById('btn-audio').addEventListener('click',function(e){
+ e.preventDefault();
+ if(!audioEnabled) initAudio();
+ else{
+  if(audioCtx){audioCtx.close();audioCtx=null;audioNode=null;}
+  pcmQueue=[];pcmReadPos=0;
+  audioEnabled=false;
+  document.getElementById('btn-audio').style.background='#0a7e8c';
+  stopMic();
+ }
+});
+
+/* Mic button */
+document.getElementById('btn-mic').addEventListener('click',function(e){
+ e.preventDefault();
+ if(!micEnabled) startMic();
+ else stopMic();
+});
+
 function setStatus(msg,ok){
  statusEl.textContent=msg;
  statusEl.className=ok?'':'disconnected';
@@ -987,7 +1182,13 @@ function connect(){
 
  ws.onmessage=function(evt){
   if(evt.data instanceof ArrayBuffer){
-   handleFrame(new DataView(evt.data));
+   var view=new DataView(evt.data);
+   var type=view.getUint8(0);
+   if(type===0x03){
+    handleAudio(view);
+    return;
+   }
+   handleFrame(view);
    frameCount++;
    var now=performance.now();
    if(now-fpsTimer>=1000){
@@ -1076,7 +1277,7 @@ document.addEventListener('keyup',function(e){
  sendKey(e.code,false);
 });
 
-/* Canvas touch/click */
+/* Canvas touch/click — also init audio on first interaction */
 function canvasCoords(e){
  var rect=canvas.getBoundingClientRect();
  return{
@@ -1086,6 +1287,7 @@ function canvasCoords(e){
 }
 
 canvas.addEventListener('mousedown',function(e){
+ if(!audioEnabled) initAudio();
  var c=canvasCoords(e);
  sendTouch(c.x,c.y,true);
 });
@@ -1102,6 +1304,7 @@ canvas.addEventListener('mouseup',function(){
 /* Touch events for mobile */
 canvas.addEventListener('touchstart',function(e){
  e.preventDefault();
+ if(!audioEnabled) initAudio();
  var t=e.touches[0];
  var c=canvasCoords(t);
  sendTouch(c.x,c.y,true);
@@ -1148,7 +1351,7 @@ function btnUp(el){
  }
 }
 
-document.querySelectorAll('.btn').forEach(function(el){
+document.querySelectorAll('.dpad .btn,.row .btn[data-key],.row .btn[data-enc]').forEach(function(el){
  el.addEventListener('mousedown',function(e){e.preventDefault();btnDown(el);});
  el.addEventListener('mouseup',function(e){e.preventDefault();btnUp(el);});
  el.addEventListener('mouseleave',function(e){btnUp(el);});
