@@ -47,7 +47,7 @@ class WebUIServer {
     void server_thread_func();
     void handle_client_data(int idx);
     bool websocket_handshake(int fd);
-    void send_websocket_frame(int fd, const uint8_t* data, size_t len, uint8_t opcode);
+    bool send_websocket_frame(int fd, const uint8_t* data, size_t len, uint8_t opcode);
     void send_http_response(int fd, const char* content_type, const char* body, size_t body_len);
     void process_websocket_message(int fd, const uint8_t* data, size_t len, uint8_t opcode);
     void remove_client(int idx);

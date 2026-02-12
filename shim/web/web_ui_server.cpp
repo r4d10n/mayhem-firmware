@@ -32,6 +32,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -244,8 +245,19 @@ static bool send_all(int fd, const void* data, size_t len) {
     size_t sent = 0;
     while (sent < len) {
         ssize_t n = ::send(fd, p + sent, len - sent, MSG_NOSIGNAL);
-        if (n <= 0) return false;
-        sent += (size_t)n;
+        if (n > 0) {
+            sent += (size_t)n;
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            /* Non-blocking socket: wait for it to become writable */
+            struct pollfd pfd = {fd, POLLOUT, 0};
+            int ret = poll(&pfd, 1, 200 /* 200ms timeout */);
+            if (ret <= 0) return false; /* Timeout or error — drop client */
+            /* Socket writable again, retry send */
+        } else if (n < 0 && errno == EINTR) {
+            continue; /* Interrupted by signal, retry */
+        } else {
+            return false; /* Real error or connection closed */
+        }
     }
     return true;
 }
@@ -403,6 +415,9 @@ void WebUIServer::handle_client_data(int idx) {
     uint8_t buf[4096];
     ssize_t n = recv(c.fd, buf, sizeof(buf), 0);
 
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return; /* No data right now, try again on next poll */
+    }
     if (n <= 0) {
         remove_client(idx);
         return;
@@ -539,7 +554,7 @@ bool WebUIServer::websocket_handshake(int fd) {
     if (key_len > 128) return false;
 
     /* Concatenate key + magic string */
-    static const char magic[] = "258EAFA5-E914-47DA-95CA-5AB4BB86FEA8";
+    static const char magic[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char concat[256];
     memcpy(concat, key_header, key_len);
     memcpy(concat + key_len, magic, strlen(magic));
@@ -568,7 +583,7 @@ bool WebUIServer::websocket_handshake(int fd) {
     return send_all(fd, response, (size_t)resp_len);
 }
 
-void WebUIServer::send_websocket_frame(int fd, const uint8_t* data, size_t len,
+bool WebUIServer::send_websocket_frame(int fd, const uint8_t* data, size_t len,
                                         uint8_t opcode) {
     uint8_t header[10];
     size_t header_len = 0;
@@ -592,11 +607,10 @@ void WebUIServer::send_websocket_frame(int fd, const uint8_t* data, size_t len,
         header_len = 10;
     }
 
-    /* Send header + payload atomically using writev or two sends */
-    send_all(fd, header, header_len);
-    if (len > 0) {
-        send_all(fd, data, len);
-    }
+    /* Send header then payload — both must succeed */
+    if (!send_all(fd, header, header_len)) return false;
+    if (len > 0 && !send_all(fd, data, len)) return false;
+    return true;
 }
 
 void WebUIServer::send_http_response(int fd, const char* content_type,
@@ -748,17 +762,27 @@ void WebUIServer::push_frame(const uint16_t* rgb565, int width, int height) {
         full = encode_full_frame(rgb565, width, height);
     }
 
-    /* Send to each client */
+    /* Send to each client, track failures for cleanup */
+    int dead[MAX_CLIENTS];
+    int dead_count = 0;
+
     for (int i = 0; i < client_count_; i++) {
         if (!clients_[i].websocket_ready) continue;
 
+        bool ok = true;
         if (clients_[i].needs_full_frame || delta.empty()) {
-            send_websocket_frame(clients_[i].fd, full.data(), full.size(), 0x02);
-            clients_[i].needs_full_frame = false;
+            ok = send_websocket_frame(clients_[i].fd, full.data(), full.size(), 0x02);
+            if (ok) clients_[i].needs_full_frame = false;
         } else if (delta.size() > 5) {
             /* Only send delta if there are actual changes (header is 5 bytes) */
-            send_websocket_frame(clients_[i].fd, delta.data(), delta.size(), 0x02);
+            ok = send_websocket_frame(clients_[i].fd, delta.data(), delta.size(), 0x02);
         }
+        if (!ok) dead[dead_count++] = i;
+    }
+
+    /* Remove dead clients in reverse order (remove_client swaps with last) */
+    for (int d = dead_count - 1; d >= 0; d--) {
+        remove_client(dead[d]);
     }
 
     /* Update previous frame */
